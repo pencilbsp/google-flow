@@ -136,15 +136,15 @@ def main():
         print("Error: Chỉ hỗ trợ JSON cookie.", file=sys.stderr)
         sys.exit(1)
 
-    # Build header Cookie: "name1=val1; name2=val2; ..."
-    if isinstance(cookie_data, list):
-        try:
-            cookie_header = "; ".join(f"{c['name']}={c['value']}" for c in cookie_data)
-        except KeyError:
-            print("Error: Mỗi phần tử trong mảng cookie cần có 'name' và 'value'.", file=sys.stderr)
-            sys.exit(1)
-    else:  # dict
-        cookie_header = "; ".join(f"{k}={v}" for k, v in cookie_data.items())
+    if isinstance(cookie_data, dict) and "cookies" in cookie_data and isinstance(cookie_data["cookies"], list):
+        cookie_list = cookie_data["cookies"]
+    elif isinstance(cookie_data, list):
+        cookie_list = cookie_data
+    elif isinstance(cookie_data, dict):
+        cookie_list = [{"name": k, "value": v} for k, v in cookie_data.items()]
+    else:
+        print("Error: Định dạng JSON cookie không đúng.", file=sys.stderr)
+        sys.exit(1)
 
     if not isinstance(cookie_data, (list, dict)):
         print("Error: Định dạng JSON cookie không đúng (cần array hoặc object).", file=sys.stderr)
@@ -152,7 +152,6 @@ def main():
 
     print(f"Project ID: {project_id}")
     print(f"Lưu video tại: {video_dir}")
-    print(f"Header Cookie: {cookie_header}\n")
 
     referer_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}?"
 
@@ -161,11 +160,11 @@ def main():
     session.headers.update({"content-type": "application/json"})
     session.headers.update({"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"})
 
-    if isinstance(cookie_data, list):
-        for c in cookie_data:
+    if isinstance(cookie_list, list):
+        for c in cookie_list:
             session.cookies.set(c["name"], c["value"])
     else:
-        for k, v in cookie_data.items():
+        for k, v in cookie_list.items():
             session.cookies.set(k, v)
     
     workflows = fetch_all_workflows(project_id, session, page_size=3)
