@@ -6,11 +6,12 @@ import requests
 from pathlib import Path
 from urllib.parse import quote_plus
 
-def download_videos(workflows: list, video_dir: Path):
+def download_videos(workflows: list, video_dir: Path, limit: int = None):
     """
     Download tất cả video trong workflows về thư mục video_dir.
     File sẽ được đặt tên <mediaKey>.mp4.
     """
+    downloaded = 0
     video_dir.mkdir(parents=True, exist_ok=True)
 
     for wf in workflows:
@@ -18,6 +19,9 @@ def download_videos(workflows: list, video_dir: Path):
         for step in wf.get("workflowSteps", []):
             step_id = step.get("workflowStepId", "unknown-step")
             for gen in step.get("mediaGenerations", []):
+                if limit is not None and downloaded >= limit:
+                    return
+
                 # extract thông tin id để đặt tên file
                 media_info = gen["mediaGenerationId"]
                 media_key = media_info.get("mediaKey")
@@ -48,7 +52,8 @@ def download_videos(workflows: list, video_dir: Path):
                         if chunk:
                             f.write(chunk)
 
-                print(f"  ✓ Saved {out_path}")
+                print(f"  ✓ Saved {out_path}\n")
+                downloaded += 1
 
 def fetch_all_workflows(project_id: str, session: requests.Session, page_size: int = 3):
     cursor = None
@@ -85,7 +90,6 @@ def fetch_all_workflows(project_id: str, session: requests.Session, page_size: i
         data = resp.json()
         result = data["result"]["data"]["json"]["result"]
         workflows = result.get("workflows", [])
-        print(len(workflows))
         next_page_token = result.get("nextPageToken")
 
         all_workflows.extend(workflows)
@@ -105,6 +109,8 @@ def main():
     parser.add_argument("project_id", help="UUID của project cần download")
     parser.add_argument("-c", "--cookie-file", dest="cookie_file", required=True, help="Đường dẫn tệp cookie JSON (bắt buộc)")
     parser.add_argument("-d", "--video-dir", dest="video_dir", default=str(default_downloads), help=f"Thư mục lưu video (mặc định: {default_downloads})")
+    parser.add_argument("-l", "--limit", type=int, default=None, help="Giới hạn số video đầu tiên được tải")
+    parser.add_argument("-o", "--order", choices=["asc","desc"], default="asc", help="Thứ tự sắp xếp workflows theo createTime: asc (cũ→mới) hoặc desc (mới→cũ)")
 
     args = parser.parse_args()
     project_id = args.project_id
@@ -146,7 +152,7 @@ def main():
 
     print(f"Project ID: {project_id}")
     print(f"Lưu video tại: {video_dir}")
-    print(f"Header Cookie: {cookie_header}")
+    print(f"Header Cookie: {cookie_header}\n")
 
     referer_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}?"
 
@@ -164,9 +170,13 @@ def main():
     
     workflows = fetch_all_workflows(project_id, session, page_size=3)
 
+    reverse = True if args.order == "desc" else False
+    workflows.sort(key=lambda wf: wf.get("createTime",""), reverse=reverse)
+    print(f"Đã sort {len(workflows)} workflows theo createTime ({args.order}).\n")
+
     project_dir = video_dir / project_id
     project_dir.mkdir(parents=True, exist_ok=True)
-    download_videos(workflows, project_dir)
+    download_videos(workflows, project_dir, limit=args.limit)
     
 
 
