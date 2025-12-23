@@ -262,7 +262,10 @@ async function createProject(
   };
 }
 
-type VideoModelKey = "veo_3_1_t2v_fast_portrait" | "veo_3_1_t2v_portrait";
+type VideoModelKey =
+  | "veo_3_1_t2v_fast_portrait"
+  | "veo_3_1_t2v_portrait"
+  | "veo_3_1_t2v_fast";
 
 async function setLastSelectedVideoModelKey(
   cookies: Cookie[],
@@ -317,9 +320,9 @@ async function setLastSelectedVideoAspectRatio(
 }
 
 type LastSettings = {
-  lastSelectedVideoModelKey: string;
-  lastAcknowledgedChangeLogId: string;
-  lastSelectedVideoAspectRatio: string;
+  lastAcknowledgedChangeLogId?: string;
+  lastSelectedVideoModelKey?: VideoModelKey;
+  lastSelectedVideoAspectRatio?: VideoAspectRatio;
 };
 
 async function getUserSettings(cookies: Cookie[], project: Project) {
@@ -403,6 +406,7 @@ type Veo3Options = {
   aspectRatio: VideoAspectRatio;
   requestTimeoutMs?: number;
   statusTimeoutMs?: number;
+  userPaygateTier: string;
 };
 
 type Session = {
@@ -435,8 +439,8 @@ async function createVideoText(
       tool: "PINHOLE",
       sessionId: ";" + Date.now(),
       projectId: options.project.projectId,
-      userPaygateTier: "PAYGATE_TIER_TWO",
       recaptchaToken: options.recaptchaToken,
+      userPaygateTier: options.userPaygateTier,
     },
     requests: Array(options.outputsPerPrompt)
       .fill(null)
@@ -573,6 +577,30 @@ async function download(
   }
 }
 
+type PaygateTier = {
+  credits: number;
+  userPaygateTier: string;
+};
+
+async function getUserPaygateTier(session: Session) {
+  const url = new URL("https://aisandbox-pa.googleapis.com/v1/credits");
+  url.searchParams.set("key", "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY");
+  const response = await fetch(url, {
+    headers: {
+      "user-agent": USER_AGENT,
+      origin: TARGET_PAGE_URL.origin,
+      referer: TARGET_PAGE_URL.origin + "/",
+      authorization: "Bearer " + session.access_token,
+    },
+  });
+
+  if (!response.ok) throw new Error("Không thể lấy thông tin credits");
+
+  const paygateTier = (await response.json()) as PaygateTier;
+
+  return paygateTier;
+}
+
 async function main() {
   const promptPath = join(process.cwd(), "prompts.txt");
   const promptFile = Bun.file(promptPath);
@@ -597,7 +625,10 @@ async function main() {
   const cookieFileExists = await cookieFile.exists();
   if (!cookieFileExists) throw new Error("Không tìm thấy file cookie.json");
 
-  const jsonCookie = await cookieFile.json();
+  let jsonCookie = await cookieFile.json();
+  if (typeof jsonCookie === "object" && "cookies" in jsonCookie) {
+    jsonCookie = jsonCookie.cookies;
+  }
 
   await browser.setCookie(...jsonCookie);
 
@@ -612,7 +643,17 @@ async function main() {
   await page.goto(TARGET_PAGE_URL.href, { waitUntil: "load" });
   const isLogined = await checkLogined(page);
 
-  if (!isLogined) throw new Error("Không thể đăng nhập bằng cookie hiện tại");
+  if (!isLogined) {
+    console.log("Vui lòng đăng nhập trong 1 phút");
+    await Bun.sleep(60 * 1_000);
+    const cookies = await browser.cookies();
+    const pageCookies = filterCookiesByUrlDomain(cookies, TARGET_PAGE_URL);
+    await cookieFile.write(JSON.stringify(pageCookies));
+    console.log("Khởi động lại để tiếp tục");
+    await page.close();
+    await browser.close();
+    return;
+  }
 
   USER_AGENT = await page.evaluate(() => navigator.userAgent);
 
@@ -631,9 +672,7 @@ async function main() {
   const project = projects[0]!;
 
   console.log(
-    "Đang sử dụng dự án:",
-    project.projectInfo.projectTitle,
-    project.projectId
+    `Đang sử dụng dự án: [${project.projectInfo.projectTitle}] ${project.projectId}\n`
   );
 
   // @ts-ignore
@@ -656,6 +695,7 @@ async function main() {
 
   let done = 1;
 
+  const paygateTier = await getUserPaygateTier(session);
   const lastSettings = await getUserSettings(pageCookies, project);
 
   for (const prompt of prompts) {
@@ -683,8 +723,12 @@ async function main() {
       recaptchaToken,
       isSeedLocked: false,
       outputsPerPrompt: 1,
-      videoModelKey: lastSettings.lastSelectedVideoModelKey as any,
-      aspectRatio: lastSettings.lastSelectedVideoAspectRatio as any,
+      userPaygateTier: paygateTier.userPaygateTier,
+      videoModelKey:
+        lastSettings.lastSelectedVideoModelKey ?? "veo_3_1_t2v_fast",
+      aspectRatio:
+        lastSettings.lastSelectedVideoAspectRatio ??
+        "VIDEO_ASPECT_RATIO_LANDSCAPE",
     });
 
     console.log(`[${done}/${prompts.length}] Đang tải xuống các video`);
@@ -694,7 +738,7 @@ async function main() {
     const totalTime = end - start;
     const totalSeconds = Math.round(totalTime / 1000);
     console.log(
-      `[${done}/${prompts.length}] Hoàn thành lúc trong: ${totalSeconds} giây\n`
+      `[${done}/${prompts.length}] Hoàn thành trong: ${totalSeconds} giây\n`
     );
 
     done++;
