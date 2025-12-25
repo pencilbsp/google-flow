@@ -1,6 +1,7 @@
 .venv
 prompts.txt
 cookie.json
+.DS_Store
 
 videos
 

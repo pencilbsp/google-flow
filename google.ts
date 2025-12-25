@@ -13,8 +13,10 @@ import type {
   SearchProjectWorkflowsOptions,
   SearchProjectWorkflowsResponse,
   Operation,
+  VideoModel,
 } from "./type";
 import { existsSync } from "fs";
+import { getVideoModelOptions } from "./get-video-model-options";
 
 let USER_AGENT = "";
 const BASE_API_URL = "https://labs.google/fx/api/trpc";
@@ -262,33 +264,37 @@ async function createProject(
   };
 }
 
-type VideoModelKey =
-  | "veo_3_1_t2v_fast_portrait"
-  | "veo_3_1_t2v_portrait"
-  | "veo_3_1_t2v_fast";
+type VideoModelKey = string;
 
 async function setLastSelectedVideoModelKey(
   cookies: Cookie[],
   project: Project,
   modelKey: VideoModelKey
 ) {
-  const cookieHeader = toHeaderCookie(cookies);
-
   const refererUrl = new URL(
     `/fx/tools/flow/project/${project.projectId}`,
     TARGET_PAGE_URL.href
   );
 
-  return fetch(BASE_API_URL + "/videoFx.setLastSelectedVideoModelKey", {
-    method: "POST",
-    headers: {
-      cookie: cookieHeader,
-      referer: refererUrl.href,
-      "user-agent": USER_AGENT,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ json: { modelKey } }),
-  });
+  const response = await fetch(
+    BASE_API_URL + "/videoFx.setLastSelectedVideoModelKey",
+    {
+      method: "POST",
+      headers: {
+        referer: refererUrl.href,
+        "user-agent": USER_AGENT,
+        origin: TARGET_PAGE_URL.origin,
+        cookie: toHeaderCookie(cookies),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ json: { modelKey } }),
+    }
+  );
+
+  if (!response.ok) throw new Error("Đặt VideoModelKey không thành công");
+
+  const data = (await response.json()) as ProjectResponse<any>;
+  return data.result.data.json;
 }
 
 type VideoAspectRatio =
@@ -300,23 +306,29 @@ async function setLastSelectedVideoAspectRatio(
   project: Project,
   videoAspectRatio: VideoAspectRatio
 ) {
-  const cookieHeader = toHeaderCookie(cookies);
-
   const refererUrl = new URL(
     `/fx/tools/flow/project/${project.projectId}`,
     TARGET_PAGE_URL.href
   );
 
-  return fetch(BASE_API_URL + "/videoFx.setLastSelectedVideoAspectRatio", {
-    method: "POST",
-    headers: {
-      cookie: cookieHeader,
-      referer: refererUrl.href,
-      "user-agent": USER_AGENT,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ json: { videoAspectRatio } }),
-  });
+  const response = await fetch(
+    BASE_API_URL + "/videoFx.setLastSelectedVideoAspectRatio",
+    {
+      method: "POST",
+      headers: {
+        referer: refererUrl.href,
+        "user-agent": USER_AGENT,
+        origin: TARGET_PAGE_URL.origin,
+        cookie: toHeaderCookie(cookies),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ json: { videoAspectRatio } }),
+    }
+  );
+
+  if (!response.ok) throw new Error("Đặt VideoAspectRatio không thành công");
+  const data = (await response.json()) as ProjectResponse<any>;
+  return data.result.data.json;
 }
 
 type LastSettings = {
@@ -326,26 +338,23 @@ type LastSettings = {
 };
 
 async function getUserSettings(cookies: Cookie[], project: Project) {
-  const cookieHeader = toHeaderCookie(cookies);
-
   const refererUrl = new URL(
     `/fx/tools/flow/project/${project.projectId}`,
     TARGET_PAGE_URL.href
   );
 
-  const url = new URL(
-    "https://labs.google/fx/api/trpc/videoFx.getUserSettings"
-  );
-
+  const url = new URL(`${BASE_API_URL}/videoFx.getUserSettings`);
   url.searchParams.set(
     "input",
     JSON.stringify({ json: null, meta: { values: ["undefined"] } })
   );
+
   const response = await fetch(url, {
     headers: {
-      cookie: cookieHeader,
       referer: refererUrl.href,
       "user-agent": USER_AGENT,
+      origin: TARGET_PAGE_URL.origin,
+      cookie: toHeaderCookie(cookies),
       "content-type": "application/json",
     },
   });
@@ -418,22 +427,10 @@ type Session = {
 };
 
 async function createVideoText(
-  cookies: Cookie[],
   session: Session,
   prompt: string,
   options: Veo3Options
 ): Promise<Operation[]> {
-  await setLastSelectedVideoModelKey(
-    cookies,
-    options.project,
-    options.videoModelKey
-  );
-  await setLastSelectedVideoAspectRatio(
-    cookies,
-    options.project,
-    options.aspectRatio
-  );
-
   const payload = {
     clientContext: {
       tool: "PINHOLE",
@@ -490,19 +487,21 @@ async function createVideoText(
     operations.map((op: any) => [op.sceneId, op])
   );
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let attempts = 0;
     const interval = setInterval(async () => {
       try {
         attempts += 1;
-        if (attempts > 100) {
+        if (attempts > 250) {
           clearInterval(interval);
-          throw new Error("Vượt quá 100 lần kiểm tra trạng thái video");
+          reject(new Error("Vượt quá 100 lần kiểm tra trạng thái video"));
+          return;
         }
 
         if (operations.length === 0) {
           clearInterval(interval);
-          return resolve([...statusMap.values()]);
+          resolve([...statusMap.values()]);
+          return;
         } else {
           const statusController = createTimeoutController(statusTimeoutMs);
           const response = await fetch(
@@ -529,10 +528,8 @@ async function createVideoText(
             return op.status !== "MEDIA_GENERATION_STATUS_SUCCESSFUL";
           });
         }
-      } catch (error) {
-        console.log(error);
-      }
-    }, 2000);
+      } catch {}
+    }, 3_000);
   });
 }
 
@@ -581,6 +578,34 @@ type PaygateTier = {
   credits: number;
   userPaygateTier: string;
 };
+
+async function getVideoModelConfig(cookies: Cookie[], project: Project) {
+  const url = new URL(`${BASE_API_URL}/videoFx.getVideoModelConfig`);
+  url.searchParams.set(
+    "input",
+    JSON.stringify({ json: null, meta: { values: ["undefined"] } })
+  );
+
+  const refererUrl = new URL(
+    `/fx/tools/flow/project/${project.projectId}`,
+    TARGET_PAGE_URL.href
+  );
+
+  const response = await fetch(url, {
+    headers: {
+      referer: refererUrl.href,
+      "user-agent": USER_AGENT,
+      cookie: toHeaderCookie(cookies),
+    },
+  });
+
+  if (!response.ok) throw new Error("Không thể tải danh sách videoModels");
+  const data = (await response.json()) as ProjectResponse<{
+    videoModels: VideoModel[];
+  }>;
+
+  return data.result.data.json.result.videoModels;
+}
 
 async function getUserPaygateTier(session: Session) {
   const url = new URL("https://aisandbox-pa.googleapis.com/v1/credits");
@@ -685,6 +710,15 @@ async function main() {
   const startProjectUrl = `${TARGET_PAGE_URL.href}/project/${project.projectId}`;
   await page.goto(startProjectUrl, { waitUntil: "load" });
 
+  // const configXPath =
+  //   '//*[@id="__next"]/div[2]/div/div/div[2]/div/div[1]/div[2]/div/div/div[1]/div[2]/button[2]';
+
+  // const configButton = await page.waitForSelector(`xpath=${configXPath}`, {
+  //   timeout: 5_000,
+  // });
+
+  // await page.click(`xpath=${configXPath}`, { delay: 20 });
+
   const videoDir = join(process.cwd(), "videos", project.projectId);
 
   // Get access_token
@@ -697,54 +731,93 @@ async function main() {
 
   const paygateTier = await getUserPaygateTier(session);
   const lastSettings = await getUserSettings(pageCookies, project);
+  const videoModels = await getVideoModelConfig(pageCookies, project);
 
-  for (const prompt of prompts) {
-    const start = performance.now();
+  const modelOptions = getVideoModelOptions(videoModels);
 
-    await Bun.sleep(5000);
-    // Get recaptchaToken
-    const recaptchaToken: string | undefined = await page.evaluate(
-      async (action) => {
-        // @ts-ignore
-        const fn = window.__recaptchaFn;
-        return typeof fn === "function" ? await fn(action) : undefined;
-      },
-      "FLOW_GENERATION"
+  const videoModel = (() => {
+    if (lastSettings.lastSelectedVideoModelKey) {
+      const target = lastSettings.lastSelectedVideoModelKey;
+      const select = modelOptions.find((o) => o.keys?.includes(target));
+      if (select) return select;
+    }
+    const selected = modelOptions.find(
+      (o) => o.icon === "radio_button_checked"
     );
 
-    if (!recaptchaToken)
-      throw new Error(
-        "Không thể lấy mã recaptcha, vui lòng liên nhà phát triển"
-      );
+    if (selected) {
+      return selected;
+    }
+  })();
 
-    console.log(`[${done}/${prompts.length}] Đang tạo video: ${prompt}`);
-    const result = await createVideoText(pageCookies, session, prompt, {
-      project,
-      recaptchaToken,
-      isSeedLocked: false,
-      outputsPerPrompt: 1,
-      userPaygateTier: paygateTier.userPaygateTier,
-      videoModelKey:
-        lastSettings.lastSelectedVideoModelKey ?? "veo_3_1_t2v_fast",
-      aspectRatio:
-        lastSettings.lastSelectedVideoAspectRatio ??
-        "VIDEO_ASPECT_RATIO_LANDSCAPE",
-    });
-
-    console.log(`[${done}/${prompts.length}] Đang tải xuống các video`);
-    await download(result, videoDir);
-
-    const end = performance.now();
-    const totalTime = end - start;
-    const totalSeconds = Math.round(totalTime / 1000);
-    console.log(
-      `[${done}/${prompts.length}] Hoàn thành trong: ${totalSeconds} giây\n`
-    );
-
-    done++;
+  if (!videoModel) {
+    throw new Error("Không tìm thấy video model phù hợp cho tài khoản này");
   }
 
-  await Bun.sleep(5000);
+  const videoModelKey = videoModel.keys?.[0];
+  const aspectRatio = videoModel.supportedAspectRatios?.[0] as
+    | VideoAspectRatio
+    | undefined;
+
+  if (!videoModelKey || !aspectRatio) {
+    throw new Error("Video model không khả dụng cho tài khoản này");
+  }
+
+  await setLastSelectedVideoModelKey(pageCookies, project, videoModelKey);
+  await setLastSelectedVideoAspectRatio(pageCookies, project, aspectRatio);
+
+  for (const prompt of prompts) {
+    try {
+      const start = performance.now();
+
+      // Get recaptchaToken
+      const recaptchaToken: string | undefined = await page.evaluate(
+        async (action) => {
+          // @ts-ignore
+          const fn = window.__recaptchaFn;
+          return typeof fn === "function" ? await fn(action) : undefined;
+        },
+        "FLOW_GENERATION"
+      );
+
+      if (!recaptchaToken)
+        throw new Error(
+          "Không thể lấy mã recaptcha, vui lòng liên nhà phát triển"
+        );
+
+      console.log(`[${done}/${prompts.length}] Đang tạo video: ${prompt}`);
+      const result = await createVideoText(session, prompt, {
+        project,
+        aspectRatio,
+        videoModelKey,
+        recaptchaToken,
+        isSeedLocked: false,
+        outputsPerPrompt: 1,
+        userPaygateTier: paygateTier.userPaygateTier,
+      });
+
+      console.log(`[${done}/${prompts.length}] Đang tải xuống các video`);
+      await download(result, videoDir);
+
+      const end = performance.now();
+      const totalTime = end - start;
+      const totalSeconds = Math.round(totalTime / 1000);
+      console.log(
+        `[${done}/${prompts.length}] Hoàn thành trong: ${totalSeconds} giây\n`
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        console.log(
+          `[${done}/${prompts.length}] Tạo video thất bại: ${error.message}\n`
+        );
+      }
+    } finally {
+      done++;
+      await Bun.sleep(30_000);
+    }
+  }
+
+  await Bun.sleep(5_000);
 
   await page.close();
 

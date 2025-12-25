@@ -153,3 +153,26 @@ export type Operation = {
   mediaGenerationId: string;
   status: string;
 };
+
+export type VideoModel = {
+  key: string;
+  supportedAspectRatios: string[];
+  accessType: string;
+  capabilities: string[];
+  videoLengthSeconds: number;
+  videoGenerationTimeSeconds: number;
+  displayName: string;
+  creditCost: number;
+  framesPerSecond: number;
+  paygateTier: string;
+  modelAccessInfo: {
+    paygateAccessBlocked?: boolean;
+  };
+  modelMetadata: {
+    veoModelName?: string;
+    modelQuality?: string;
+  };
+  modelStatus?: string;
+  shareCardDisplayName: string;
+  supportedResolutions?: string[];
+};
