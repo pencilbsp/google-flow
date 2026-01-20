@@ -1,12 +1,14 @@
 {
   "dependencies": {
     "@types/jsonwebtoken": "^9.0.10",
+    "prompts": "^2.4.2",
     "puppeteer-real-browser": "https://github.com/pencilbsp/puppeteer-real-browser.git"
   },
   "name": "google-flow",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/prompts": "^2.4.9"
   },
   "peerDependencies": {
     "typescript": "^5"
