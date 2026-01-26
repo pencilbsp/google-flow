@@ -392,16 +392,18 @@ async function patchApp(req: HTTPRequest) {
     // await Bun.write("debug_app.js", body); // Removed
 
     // Search for Site Key
-    if (body.includes("6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV")) {
-      // console.log(`[DEBUG] Found Site Key in: ${req.url()}`);
+    // Dynamic Patch: Find the async function that calls grecaptcha with the specific site key
+    // Updated Logic: The site key is now in a string pool, so we can't search for it directly in the function body
+    // We look for the pattern: ... = async (arg) => { ... "action": arg ... }
+    // Dynamic Patch: Find the async function that calls grecaptcha with the specific site key
+    // Updated Logic: The site key is now in a string pool, so we can't search for it directly in the function body
+    // We look for the pattern: ... = async (arg) => { ... "action": arg ... }
+    // Using assignment chaining: var = window.fn = async ...
+    const patchRe =
+      /\b(_0x\w{6})(\s*=\s*async\b[^{]*\{(?=(?:(?!\}\s*,)[\s\S])*?\breturn\s+await\s+new\s+Promise\b)(?=(?:(?!\}\s*,)[\s\S])*?['"]action['"]\s*:)(?:(?!\}\s*,)[\s\S])*?\}\s*),/;
 
-      // Dynamic Patch: Find the async function that calls grecaptcha with the specific site key
-      // The code structure observed: ('6Lds...', { 'action': arg })
-      // So 6Lds comes BEFORE 'action'
-      body = body.replace(
-        /([,;]\s*[a-zA-Z0-9_$]+\s*=\s*)async\s*([a-zA-Z0-9_$]+)(\s*=>\s*\{[\s\S]{0,2000}?6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV[\s\S]{0,100}?(?:'action'|action):\s*\2)/,
-        "$1window.__recaptchaFn=async $2$3",
-      );
+    if (patchRe.test(body)) {
+      body = body.replace(patchRe, "$1$2;window.__recaptchaFn=$1;let ");
     }
 
     // Original Patch Logic (Commented out or strictly controlled)
@@ -1052,7 +1054,7 @@ async function main() {
           const fn = window.__recaptchaFn;
           return typeof fn === "function" ? await fn(action) : undefined;
         },
-        "FLOW_GENERATION",
+        "VIDEO_GENERATION",
       );
 
       if (!recaptchaToken)
